@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+
+set -e
+
+declare ENV_FILE=".last-run.env"
+declare REPO_NAME=$(basename $(git rev-parse --show-toplevel))
+
+
+touch $ENV_FILE
+source $ENV_FILE
+
+get_tfvars_dir() {
+  find . -type f -name "*.tfvars" | cut -d "/" -f 2 | uniq
+}
+
+get_tfvars_files() {
+  local dir=$1
+
+  find "./$dir" -type f -name "*.tfvars" | cut -d "/" -f 3 | cut -d "." -f 1
+}
+
+select_tfvars_file() {
+  DIR=$(gum choose $(get_tfvars_dir))
+  FILE=$(gum choose $(get_tfvars_files $DIR))
+
+  echo -e "export TF_VARS_DIR=${DIR}\nexport TF_VARS_FILE=${FILE}" > $ENV_FILE
+  source $ENV_FILE
+}
+
+if [[ -z $TF_VARS_DIR || -z $TF_VARS_FILE ]]; then
+  select_tfvars_file
+else
+  gum confirm "Env: ${TF_VARS_DIR} & ${TF_VARS_FILE}?" || select_tfvars_file
+fi
+
+main() {
+  local cmd="${1:-help}"
+  KEY="-backend-config=key=${REPO_NAME}/buildkite/pipelines/${TF_VARS_FILE}.tfstate"
+  VAR_FILE="-var-file=${TF_VARS_DIR}/${TF_VARS_FILE}.tfvars"
+
+  case $cmd in
+    init)
+      rm -rf .terraform
+      echo "${@}" "$KEY" | xargs -t terraform
+      ;;
+    help)
+      terraform -help
+      ;;
+    plan | apply | destroy)
+      echo "${@}" "$VAR_FILE" | xargs -t terraform 
+      ;;
+    import)
+      shift
+      echo "$cmd" "$VAR_FILE" "${@}" | xargs -t terraform
+      ;;
+    *)
+      terraform "${@}"
+      ;;
+  esac
+}
+
+main "${@}"
